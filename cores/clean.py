@@ -1,4 +1,5 @@
 import os
+from tqdm import tqdm
 import time
 import numpy as np
 import cv2
@@ -42,27 +43,33 @@ def get_mosaic_positions(opt,netM,imagepaths,savemask=True):
     t.setDaemon(True)
     t.start()
 
-    for i,imagepath in enumerate(imagepaths,1):
-        img_origin = img_read_pool.get()
-        x,y,size,mask = runmodel.get_mosaic_position(img_origin,netM,opt)
-        positions.append([x,y,size])
-        if savemask:
-            t = Thread(target=cv2.imwrite,args=(os.path.join(opt.temp_dir+'/mosaic_mask',imagepath), mask,))
-            t.start()
-        if i%1000==0:
-            save_positions = np.array(positions)
-            if continue_flag:
-                save_positions = np.concatenate((pre_positions,save_positions),axis=0)
-            np.save(os.path.join(opt.temp_dir,'mosaic_positions.npy'),save_positions)
-            step = {'step':2,'frame':i+resume_frame}
-            util.savejson(os.path.join(opt.temp_dir,'step.json'),step)
+for i, imagepath in tqdm(enumerate(imagepaths, 1), total=total_iterations):
+    img_origin = img_read_pool.get()
+    x, y, size, mask = runmodel.get_mosaic_position(img_origin, netM, opt)
+    positions.append([x, y, size])
+    
+    if savemask:
+        t = Thread(target=cv2.imwrite, args=(os.path.join(opt.temp_dir+'/mosaic_mask', imagepath), mask,))
+        t.start()
+    
+    if i % 1000 == 0:
+        save_positions = np.array(positions)
+        
+        if continue_flag:
+            save_positions = np.concatenate((pre_positions, save_positions), axis=0)
+        
+        np.save(os.path.join(opt.temp_dir, 'mosaic_positions.npy'), save_positions)
+        step = {'step': 2, 'frame': i + resume_frame}
+        util.savejson(os.path.join(opt.temp_dir, 'step.json'), step)
 
-        #preview result and print
-        if not opt.no_preview:
-            cv2.imshow('mosaic mask',mask)
-            cv2.waitKey(1) & 0xFF
-        t2 = time.time()
-        print('\r',str(i)+'/'+str(len(imagepaths)),util.get_bar(100*i/len(imagepaths),num=35),util.counttime(t1,t2,i,len(imagepaths)),end='')
+    # Preview result and print
+    if not opt.no_preview:
+        cv2.imshow('mosaic mask', mask)
+        cv2.waitKey(1) & 0xFF
+    
+    t2 = time.time()
+    print('\r', str(i) + '/' + str(total_iterations), util.get_bar(100 * i / total_iterations, num=35),
+          util.counttime(t1, t2, i, total_iterations), end='')
     
     if not opt.no_preview:
         cv2.destroyAllWindows()
@@ -173,70 +180,81 @@ def cleanmosaic_video_fusion(opt,netG,netM):
     if not opt.no_preview:
         cv2.namedWindow('clean', cv2.WINDOW_NORMAL)
     
-    # clean mosaic
-    print('Step:3/4 -- Clean Mosaic:')
-    length = len(imagepaths)
-    write_pool = Queue(4)
-    show_pool = Queue(4)
-    def write_result():
-        while True:
-            save_ori,imagepath,img_origin,img_fake,x,y,size = write_pool.get()
-            if save_ori:
-                img_result = img_origin
-            else:
-                mask = cv2.imread(os.path.join(opt.temp_dir+'/mosaic_mask',imagepath),0)
-                img_result = impro.replace_mosaic(img_origin,img_fake,mask,x,y,size,opt.no_feather)
-            if not opt.no_preview:
-                show_pool.put(img_result.copy())
-            cv2.imwrite(os.path.join(opt.temp_dir+'/replace_mosaic',imagepath),img_result)
-            os.remove(os.path.join(opt.temp_dir+'/video2image',imagepath))
-    t = Thread(target=write_result,args=())
-    t.setDaemon(True)
-    t.start()
+# clean mosaic
+print('Step:3/4 -- Clean Mosaic:')
+length = len(imagepaths)
+write_pool = Queue(4)
+show_pool = Queue(4)
 
-    for i,imagepath in enumerate(imagepaths,0):
-        x,y,size = positions[i][0],positions[i][1],positions[i][2]
+
+def write_result():
+    while True:
+        save_ori, imagepath, img_origin, img_fake, x, y, size = write_pool.get()
+        if save_ori:
+            img_result = img_origin
+        else:
+            mask = cv2.imread(os.path.join(opt.temp_dir + '/mosaic_mask', imagepath), 0)
+            img_result = impro.replace_mosaic(img_origin, img_fake, mask, x, y, size, opt.no_feather)
+        if not opt.no_preview:
+            show_pool.put(img_result.copy())
+        cv2.imwrite(os.path.join(opt.temp_dir + '/replace_mosaic', imagepath), img_result)
+        os.remove(os.path.join(opt.temp_dir + '/video2image', imagepath))
+
+
+t = Thread(target=write_result, args=())
+t.setDaemon(True)
+t.start()
+
+with tqdm(total=length, unit='image') as pbar:
+    for i, imagepath in enumerate(imagepaths, 0):
+        x, y, size = positions[i][0], positions[i][1], positions[i][2]
         input_stream = []
         # image read stream
-        if i==0 :# init
+        if i == 0:  # init
             for j in range(POOL_NUM):
-                img_pool.append(impro.imread(os.path.join(opt.temp_dir+'/video2image',imagepaths[np.clip(i+j-LEFT_FRAME,0,len(imagepaths)-1)])))
-        else: # load next frame
+                img_pool.append(
+                    impro.imread(os.path.join(opt.temp_dir + '/video2image', imagepaths[np.clip(i + j - LEFT_FRAME, 0, len(imagepaths) - 1)])))
+        else:  # load next frame
             img_pool.pop(0)
-            img_pool.append(impro.imread(os.path.join(opt.temp_dir+'/video2image',imagepaths[np.clip(i+LEFT_FRAME,0,len(imagepaths)-1)])))
+            img_pool.append(
+                impro.imread(os.path.join(opt.temp_dir + '/video2image', imagepaths[np.clip(i + LEFT_FRAME, 0, len(imagepaths) - 1)])))
         img_origin = img_pool[LEFT_FRAME]
 
         # preview result and print
         if not opt.no_preview:
-            if show_pool.qsize()>3:   
-                cv2.imshow('clean',show_pool.get())
+            if show_pool.qsize() > 3:
+                cv2.imshow('clean', show_pool.get())
                 cv2.waitKey(1) & 0xFF
 
-        if size>50:
-            try:#Avoid unknown errors
+        if size > 50:
+            try:  # Avoid unknown errors
                 for pos in FRAME_POS:
-                    input_stream.append(impro.resize(img_pool[pos][y-size:y+size,x-size:x+size], INPUT_SIZE,interpolation=cv2.INTER_CUBIC)[:,:,::-1])
+                    input_stream.append(
+                        impro.resize(img_pool[pos][y - size:y + size, x - size:x + size], INPUT_SIZE,
+                                     interpolation=cv2.INTER_CUBIC)[:, :, ::-1])
                 if init_flag:
                     init_flag = False
                     previous_frame = input_stream[N]
-                    previous_frame = data.im2tensor(previous_frame,bgr2rgb=True,gpu_id=opt.gpu_id)
-                
-                input_stream = np.array(input_stream).reshape(1,T,INPUT_SIZE,INPUT_SIZE,3).transpose((0,4,1,2,3))
-                input_stream = data.to_tensor(data.normalize(input_stream),gpu_id=opt.gpu_id)
+                    previous_frame = data.im2tensor(previous_frame, bgr2rgb=True, gpu_id=opt.gpu_id)
+
+                input_stream = np.array(input_stream).reshape(1, T, INPUT_SIZE, INPUT_SIZE, 3).transpose((0, 4, 1, 2, 3))
+                input_stream = data.to_tensor(data.normalize(input_stream), gpu_id=opt.gpu_id)
                 with torch.no_grad():
-                    unmosaic_pred = netG(input_stream,previous_frame)
-                img_fake = data.tensor2im(unmosaic_pred,rgb2bgr = True)
+                    unmosaic_pred = netG(input_stream, previous_frame)
+                img_fake = data.tensor2im(unmosaic_pred, rgb2bgr=True)
                 previous_frame = unmosaic_pred
-                write_pool.put([False,imagepath,img_origin.copy(),img_fake.copy(),x,y,size])
+                write_pool.put([False, imagepath, img_origin.copy(), img_fake.copy(), x, y, size])
             except Exception as e:
                 init_flag = True
-                print('Error:',e)
+                print('Error:', e)
         else:
-            write_pool.put([True,imagepath,img_origin.copy(),-1,-1,-1,-1])
+            write_pool.put([True, imagepath, img_origin.copy(), -1, -1, -1, -1])
             init_flag = True
-        
+
         t2 = time.time()
-        print('\r',str(i+1)+'/'+str(length),util.get_bar(100*i/length,num=35),util.counttime(t1,t2,i+1,len(imagepaths)),end='')
+        print('\r', str(i + 1) + '/' + str(length), util.get_bar(100 * (i + 1) / length, num=35),
+              util.counttime(t1, t2, i + 1, len(imagepaths)), end='')
+        pbar.update(1)
     print()
     write_pool.close()
     show_pool.close()

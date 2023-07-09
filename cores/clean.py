@@ -14,20 +14,20 @@ from threading import Thread
 '''
 ---------------------Clean Mosaic---------------------
 '''
-def get_mosaic_positions(opt,netM,imagepaths,savemask=True):
+def get_mosaic_positions(opt, netM, imagepaths, savemask=True):
     # resume
     continue_flag = False
-    if os.path.isfile(os.path.join(opt.temp_dir,'step.json')):
-        step = util.loadjson(os.path.join(opt.temp_dir,'step.json'))
+    if os.path.isfile(os.path.join(opt.temp_dir, 'step.json')):
+        step = util.loadjson(os.path.join(opt.temp_dir, 'step.json'))
         resume_frame = int(step['frame'])
-        if int(step['step'])>2:
-            pre_positions = np.load(os.path.join(opt.temp_dir,'mosaic_positions.npy'))
+        if int(step['step']) > 2:
+            pre_positions = np.load(os.path.join(opt.temp_dir, 'mosaic_positions.npy'))
             return pre_positions
-        if int(step['step'])>=2 and resume_frame>0:
-            pre_positions = np.load(os.path.join(opt.temp_dir,'mosaic_positions.npy'))
+        if int(step['step']) >= 2 and resume_frame > 0:
+            pre_positions = np.load(os.path.join(opt.temp_dir, 'mosaic_positions.npy'))
             continue_flag = True
             imagepaths = imagepaths[resume_frame:]
-            
+
     positions = []
     t1 = time.time()
     if not opt.no_preview:
@@ -35,52 +35,59 @@ def get_mosaic_positions(opt,netM,imagepaths,savemask=True):
     print('Step:2/4 -- Find mosaic location')
 
     img_read_pool = Queue(4)
+
     def loader(imagepaths):
         for imagepath in imagepaths:
-            img_origin = impro.imread(os.path.join(opt.temp_dir+'/video2image',imagepath))
+            img_origin = impro.imread(os.path.join(opt.temp_dir + '/video2image', imagepath))
             img_read_pool.put(img_origin)
-    t = Thread(target=loader,args=(imagepaths,))
+
+    t = Thread(target=loader, args=(imagepaths,))
     t.setDaemon(True)
     t.start()
 
-for i, imagepath in tqdm(enumerate(imagepaths, 1), total=total_iterations):
-    img_origin = img_read_pool.get()
-    x, y, size, mask = runmodel.get_mosaic_position(img_origin, netM, opt)
-    positions.append([x, y, size])
-    
-    if savemask:
-        t = Thread(target=cv2.imwrite, args=(os.path.join(opt.temp_dir+'/mosaic_mask', imagepath), mask,))
-        t.start()
-    
-    if i % 1000 == 0:
-        save_positions = np.array(positions)
-        
-        if continue_flag:
-            save_positions = np.concatenate((pre_positions, save_positions), axis=0)
-        
-        np.save(os.path.join(opt.temp_dir, 'mosaic_positions.npy'), save_positions)
-        step = {'step': 2, 'frame': i + resume_frame}
-        util.savejson(os.path.join(opt.temp_dir, 'step.json'), step)
+    total_iterations = len(imagepaths)
 
-    # Preview result and print
-    if not opt.no_preview:
-        cv2.imshow('mosaic mask', mask)
-        cv2.waitKey(1) & 0xFF
-    
-    t2 = time.time()
-    print('\r', str(i) + '/' + str(total_iterations), util.get_bar(100 * i / total_iterations, num=35),
-          util.counttime(t1, t2, i, total_iterations), end='')
-    
+    with tqdm(total=total_iterations, unit='image') as pbar:
+        for i, imagepath in enumerate(imagepaths, 1):
+            img_origin = img_read_pool.get()
+            x, y, size, mask = runmodel.get_mosaic_position(img_origin, netM, opt)
+            positions.append([x, y, size])
+
+            if savemask:
+                t = Thread(target=cv2.imwrite, args=(os.path.join(opt.temp_dir + '/mosaic_mask', imagepath), mask,))
+                t.start()
+
+            if i % 1000 == 0:
+                save_positions = np.array(positions)
+
+                if continue_flag:
+                    save_positions = np.concatenate((pre_positions, save_positions), axis=0)
+
+                np.save(os.path.join(opt.temp_dir, 'mosaic_positions.npy'), save_positions)
+                step = {'step': 2, 'frame': i + resume_frame}
+                util.savejson(os.path.join(opt.temp_dir, 'step.json'), step)
+
+            # Preview result and print
+            if not opt.no_preview:
+                cv2.imshow('mosaic mask', mask)
+                cv2.waitKey(1) & 0xFF
+
+            t2 = time.time()
+            print('\r', str(i) + '/' + str(total_iterations), util.get_bar(100 * i / total_iterations, num=35),
+                  util.counttime(t1, t2, i, total_iterations), end='')
+            pbar.update(1)
+
     if not opt.no_preview:
         cv2.destroyAllWindows()
     print('\nOptimize mosaic locations...')
-    positions =np.array(positions)
+    positions = np.array(positions)
     if continue_flag:
-        positions = np.concatenate((pre_positions,positions),axis=0)
-    for i in range(3):positions[:,i] = filt.medfilt(positions[:,i],opt.medfilt_num)
-    step = {'step':3,'frame':0}
-    util.savejson(os.path.join(opt.temp_dir,'step.json'),step)
-    np.save(os.path.join(opt.temp_dir,'mosaic_positions.npy'),positions)
+        positions = np.concatenate((pre_positions, positions), axis=0)
+    for i in range(3):
+        positions[:, i] = filt.medfilt(positions[:, i], opt.medfilt_num)
+    step = {'step': 3, 'frame': 0}
+    util.savejson(os.path.join(opt.temp_dir, 'step.json'), step)
+    np.save(os.path.join(opt.temp_dir, 'mosaic_positions.npy'), positions)
 
     return positions
 

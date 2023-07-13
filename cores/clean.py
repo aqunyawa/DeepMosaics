@@ -180,7 +180,7 @@ def cleanmosaic_video_fusion(opt, netG, netM):
                     input_stream = np.array(input_stream).reshape(1, T, INPUT_SIZE, INPUT_SIZE, 3).transpose((0, 4, 1, 2, 3))
                     input_stream = data.to_tensor(data.normalize(input_stream), gpu_id=opt.gpu_id)
                     with torch.no_grad():
-                        unmosaic_pred = netG(input_stream, previous_frame)
+                        unmosaic_pred = netG(input_stream, previous_frame=previous_frame)
                     img_fake = data.tensor2im(unmosaic_pred, rgb2bgr=True)
                     previous_frame = unmosaic_pred
                     write_pool.put([False, imagepath, img_origin.copy(), img_fake.copy(), x, y, size])

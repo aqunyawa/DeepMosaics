@@ -18,6 +18,7 @@ def extract_frames(video_path, output_dir):
         'ffmpeg',
         '-i', video_path,
         '-vf', 'fps=30',
+        '-an',
         os.path.join(output_dir, 'output_%06d.jpg')
     ]
     subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)

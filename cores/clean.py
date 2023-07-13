@@ -202,15 +202,17 @@ def cleanmosaic_video_fusion(opt, netG, netM):
     ]
 
     pbar.write('Converting images to video...')
+
+    frame_counter = 0
     with tqdm(total=length, ncols=80) as pbar_ffmpeg:
         proc = ffmpeg.run_async(cmd, pipe_stdout=True, pipe_stderr=True)
 
         for line in proc.stderr.iter():
             line_str = line.decode().strip()
             if line_str.startswith('frame='):
-                progress_str = line_str.split('=')[1].split()[0]
-                progress = int(progress_str)
-                pbar_ffmpeg.update(progress - pbar_ffmpeg.n)
+                frame_counter += 1
+                pbar_ffmpeg.set_postfix_str(f'Frame: {frame_counter}/{length}')
+                pbar_ffmpeg.update(1)
 
         proc.wait()
 

@@ -145,7 +145,7 @@ def cleanmosaic_video_fusion(opt, netG, netM):
             with torch.no_grad():
                 _ = netG(input_stream)
 
-    with tqdm(total=length, unit='image') as pbar:
+    with tqdm(total=length, unit='image', ncols=80) as pbar:
         for i, imagepath in enumerate(imagepaths, 0):
             x, y, size = positions[i][0], positions[i][1], positions[i][2]
             input_stream = []
@@ -201,11 +201,24 @@ def cleanmosaic_video_fusion(opt, netG, netM):
     if not opt.no_preview:
         cv2.destroyAllWindows()
     print('Step:4/4 -- Convert images to video')
+
+    # Progress bar for ffmpeg conversion
+    def ffmpeg_progress(p):
+        pbar.write('Converting images to video...')
+        pbar.total = 100
+        for line in p.stderr:
+            if line.startswith('frame='):
+                frame = int(line.split('frame=')[1].split()[0])
+                progress = frame / length * 100
+                pbar.update(progress - pbar.n)
+        pbar.close()
+
     (
         ffmpeg
         .input(opt.temp_dir + '/replace_mosaic/output_%06d.' + opt.tempimage_type, framerate=fps)
         .output(opt.temp_dir + '/output.mp4', vcodec='h264_nvenc', pix_fmt='yuv420p')
-        .run()
+        .global_args('-progress', 'pipe:1')
+        .run_async(pipe_stdout=True, pipe_stderr=True, quiet=True, on_progress=ffmpeg_progress)
     )
     (
         ffmpeg

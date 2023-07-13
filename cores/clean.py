@@ -130,6 +130,21 @@ def cleanmosaic_video_fusion(opt, netG, netM):
     t.setDaemon(True)
     t.start()
 
+    # Warm-up model
+    if length > 0:
+        warmup_frames = min(5, length)
+        for i in range(warmup_frames):
+            x, y, size = positions[i][0], positions[i][1], positions[i][2]
+            img_origin = impro.imread(os.path.join(opt.temp_dir + '/video2image', imagepaths[i]))
+            input_stream = []
+            for pos in FRAME_POS:
+                input_stream.append(impro.resize(img_origin[y - size:y + size, x - size:x + size], INPUT_SIZE,
+                                                 interpolation=cv2.INTER_CUBIC)[:, :, ::-1])
+            input_stream = np.array(input_stream).reshape(1, T, INPUT_SIZE, INPUT_SIZE, 3).transpose((0, 4, 1, 2, 3))
+            input_stream = data.to_tensor(data.normalize(input_stream), gpu_id=opt.gpu_id)
+            with torch.no_grad():
+                _ = netG(input_stream)
+
     with tqdm(total=length, unit='image') as pbar:
         for i, imagepath in enumerate(imagepaths, 0):
             x, y, size = positions[i][0], positions[i][1], positions[i][2]

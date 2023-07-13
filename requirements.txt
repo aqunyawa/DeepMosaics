@@ -5,3 +5,4 @@ torch==1.7.1
 matplotlib==3.3.2
 tensorboardX==2.2
 scikit-image==0.17.2
+ffmpeg-python

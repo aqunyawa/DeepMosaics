@@ -1,4 +1,5 @@
 import os
+import subprocess
 from tqdm import tqdm
 import time
 import numpy as np
@@ -10,7 +11,16 @@ from util import image_processing as impro
 from .init import video_init
 from multiprocessing import Queue, Process
 from threading import Thread
-import ffmpeg
+
+def extract_frames(video_path, output_dir):
+    os.makedirs(output_dir, exist_ok=True)
+    cmd = [
+        'ffmpeg',
+        '-i', video_path,
+        '-vf', 'fps=30',
+        os.path.join(output_dir, 'output_%06d.jpg')
+    ]
+    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 def get_mosaic_positions(opt, netM, imagepaths, savemask=True):
     # resume
@@ -153,10 +163,14 @@ def cleanmosaic_video_fusion(opt, netG, netM):
 
             if size > 50:
                 try:  # Avoid unknown errors
+                    work_zone_width = 2 * size
+                    work_zone_height = int(work_zone_width / (width / height))
+
                     for pos in FRAME_POS:
-                        input_stream.append(
-                            impro.resize(img_pool[pos][y - size:y + size, x - size:x + size], INPUT_SIZE,
-                                         interpolation=cv2.INTER_CUBIC)[:, :, ::-1])
+                        work_zone = img_pool[pos][y - work_zone_height // 2:y + work_zone_height // 2, x - work_zone_width // 2:x + work_zone_width // 2]
+                        resized_work_zone = impro.resize(work_zone, INPUT_SIZE, interpolation=cv2.INTER_CUBIC)[:, :, ::-1]
+                        input_stream.append(resized_work_zone)
+
                     if init_flag:
                         init_flag = False
                         previous_frame = input_stream[N]
@@ -173,7 +187,7 @@ def cleanmosaic_video_fusion(opt, netG, netM):
                     init_flag = True
                     print('Error:', e)
             else:
-                write_pool.put([True, imagepath, img_origin.copy(), -1, -1, -1, -1])
+                write_pool.put([True, imagepath, img_origin.copy(), -1, -1, -1])
                 init_flag = True
 
             t2 = time.time()
@@ -191,13 +205,23 @@ def cleanmosaic_video_fusion(opt, netG, netM):
     output_filename = os.path.join(opt.result_dir, os.path.splitext(os.path.basename(path))[0] + '_clean.mp4')
     input_pattern = os.path.join(opt.temp_dir, 'replace_mosaic/output_%06d.' + opt.tempimage_type)
 
+    # Get video dimensions
+    video_info = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', path], stdout=subprocess.PIPE).stdout.decode().strip().split(',')
+    video_width = int(video_info[0])
+    video_height = int(video_info[1])
+
+    # Calculate the desired output width and height based on the video's aspect ratio
+    output_width = 1280
+    output_height = int(output_width * video_height / video_width)
+
     cmd = [
         'ffmpeg',
         '-r', str(fps),
         '-i', input_pattern,
-        '-vcodec', 'h264_nvenc',
-        '-pix_fmt', 'yuv420p',
-        '-vf', 'fps=30',
+        '-vf', f'scale={output_width}:{output_height}',
+        '-c:v', 'libx264',
+        '-crf', '18',
+        '-preset', 'fast',
         '-y', output_filename
     ]
 
@@ -205,9 +229,9 @@ def cleanmosaic_video_fusion(opt, netG, netM):
 
     frame_counter = 0
     with tqdm(total=length, ncols=80) as pbar_ffmpeg:
-        proc = ffmpeg.run_async(cmd, pipe_stdout=True, pipe_stderr=True)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-        for line in proc.stderr.iter():
+        for line in iter(proc.stderr.readline, b''):
             line_str = line.decode().strip()
             if line_str.startswith('frame='):
                 frame_counter += 1

@@ -5,11 +5,12 @@ import numpy as np
 import cv2
 import torch
 from models import runmodel
-from util import data, util, ffmpeg, filt
+from util import data, util, filt
 from util import image_processing as impro
 from .init import video_init
 from multiprocessing import Queue, Process
 from threading import Thread
+import ffmpeg
 
 def get_mosaic_positions(opt, netM, imagepaths, savemask=True):
     # resume
@@ -185,7 +186,15 @@ def cleanmosaic_video_fusion(opt, netG, netM):
     if not opt.no_preview:
         cv2.destroyAllWindows()
     print('Step:4/4 -- Convert images to video')
-    ffmpeg.image2video(fps,
-                       opt.temp_dir + '/replace_mosaic/output_%06d.' + opt.tempimage_type,
-                       opt.temp_dir + '/voice_tmp.mp3',
-                       os.path.join(opt.result_dir, os.path.splitext(os.path.basename(path))[0] + '_clean.mp4'))
+    (
+        ffmpeg
+        .input(opt.temp_dir + '/replace_mosaic/output_%06d.' + opt.tempimage_type, framerate=fps)
+        .output(opt.temp_dir + '/output.mp4', vcodec='h264_nvenc', pix_fmt='yuv420p')
+        .run()
+    )
+    (
+        ffmpeg
+        .input(opt.temp_dir + '/voice_tmp.mp3')
+        .output(os.path.join(opt.result_dir, os.path.splitext(os.path.basename(path))[0] + '_clean.mp4'), vcodec='copy', acodec='copy')
+        .run()
+    )
